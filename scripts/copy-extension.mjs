@@ -7,7 +7,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionRoot = join(root, "extension");
 const outputRoot = join(root, "dist", "extension");
 
-await rm(outputRoot, { recursive: true, force: true });
+for (const browser of ["chrome", "firefox"]) {
+  await rm(join(outputRoot, browser), { recursive: true, force: true });
+}
 await rm(join(root, "dist", "fixtures"), { recursive: true, force: true });
 
 for (const browser of ["chrome", "firefox"]) {
