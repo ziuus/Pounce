@@ -3,6 +3,8 @@ export type MatchTier = "exact" | "prefix" | "substring" | "fuzzy";
 export interface Target {
   readonly id: string;
   readonly label: string;
+  readonly role?: string;
+  readonly formGroup?: string;
   readonly primaryAction?: boolean;
   readonly proximity?: number;
   readonly hidden?: boolean;

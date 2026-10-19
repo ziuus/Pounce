@@ -62,6 +62,43 @@ test("orders primary actions before usage and proximity within a match tier", ()
   assert.deepEqual(ids(results), ["primary", "frequent", "near"]);
 });
 
+test("preserves extension metadata while ranking by usage history", () => {
+  const targets: Target[] = [
+    {
+      id: "less-used",
+      label: "Open File",
+      role: "menuitem",
+      formGroup: "files",
+    },
+    {
+      id: "more-used",
+      label: "Open Folder",
+      role: "menuitem",
+      formGroup: "files",
+    },
+  ];
+
+  const results = rankTargets(targets, "open", {
+    usageHistory: new Map([
+      ["less-used", 1],
+      ["more-used", 2],
+    ]),
+  });
+
+  assert.deepEqual(ids(results), ["more-used", "less-used"]);
+  assert.deepEqual(
+    results.map(({ target }) => ({
+      id: target.id,
+      role: target.role,
+      formGroup: target.formGroup,
+    })),
+    [
+      { id: "more-used", role: "menuitem", formGroup: "files" },
+      { id: "less-used", role: "menuitem", formGroup: "files" },
+    ],
+  );
+});
+
 test("uses proximity after primary action and usage count", () => {
   const targets: Target[] = [
     { id: "far", label: "Alpha", proximity: 10 },
