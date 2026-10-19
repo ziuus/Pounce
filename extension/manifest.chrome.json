@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Pounce",
+  "version": "0.1.0",
+  "description": "Keyboard-first target ranking and numeric hints.",
+  "permissions": ["storage"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "all_frames": false,
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "open": {
+      "suggested_key": {
+        "default": "Alt+Shift+P"
+      },
+      "description": "Open Pounce"
+    },
+    "input-first": {
+      "description": "Open Pounce in input-first mode"
+    }
+  }
+}

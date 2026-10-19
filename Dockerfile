@@ -7,6 +7,8 @@ RUN npm ci
 
 COPY tsconfig.json .nvmrc README.md SPEC.md ./
 COPY src ./src
+COPY extension ./extension
+COPY scripts ./scripts
 COPY test ./test
 
 RUN npm test
