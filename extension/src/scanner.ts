@@ -5,6 +5,7 @@ import {
   getElementLabel,
   getElementRole,
   getFormGroup,
+  isLocallyHidden,
   isDisabled,
   normalizeWhitespace,
 } from "./labels.js";
@@ -13,6 +14,12 @@ import type { ScanOptions, ScannedTarget } from "./types.js";
 export type { ScanOptions, ScannedTarget } from "./types.js";
 
 type TraversalRoot = Document | DocumentFragment;
+
+interface TraversalContext {
+  disabled: boolean;
+  hidden: boolean;
+  offset: { top: number; left: number };
+}
 
 function isNativeTarget(element: Element): boolean {
   const tagName = element.tagName.toLowerCase();
@@ -114,6 +121,10 @@ function getFrameDocument(element: Element): Document | null {
 }
 
 function visibilityFor(element: Element, options: ScanOptions): boolean {
+  if (isLocallyHidden(element)) {
+    return false;
+  }
+
   if (options.getVisibility) {
     try {
       return options.getVisibility(element);
@@ -171,7 +182,7 @@ function isPrimaryAction(element: Element): boolean {
     return type === "submit" || type === "image";
   }
   if (tagName === "button") {
-    return type === "submit" || (!type && Boolean(element.closest("form")));
+    return type === "submit" || type === "";
   }
   return false;
 }
@@ -219,41 +230,58 @@ export function scanDocument(
   const visitedRoots = new WeakSet<object>();
   const occurrences = new Map<string, number>();
   const ids = new Set<string>();
-  const widthByDocument = new WeakMap<Document, number>();
+  const width = viewportWidth(document);
 
-  const walkRoot = (root: TraversalRoot, prefix: string): void => {
+  const walkRoot = (
+    root: TraversalRoot,
+    prefix: string,
+    context: TraversalContext,
+  ): void => {
     if (visitedRoots.has(root)) {
       return;
     }
     visitedRoots.add(root);
 
     for (const [index, element] of getChildren(root).entries()) {
-      walkElement(element, prefix ? `${prefix}/${index}` : String(index));
+      walkElement(
+        element,
+        prefix ? `${prefix}/${index}` : String(index),
+        context,
+      );
     }
   };
 
-  const walkElement = (element: Element, structuralPath: string): void => {
+  const walkElement = (
+    element: Element,
+    structuralPath: string,
+    context: TraversalContext,
+  ): void => {
     if (hasOverlayMarker(element)) {
       return;
     }
 
-    if (isInteractive(element) && !isDisabled(element)) {
+    const hidden = context.hidden || !visibilityFor(element, options);
+    const disabled = context.disabled || isDisabled(element);
+    const ariaDisabled =
+      element.getAttribute("aria-disabled")?.toLowerCase() === "true";
+    const descendantDisabled = context.disabled || ariaDisabled;
+
+    if (isInteractive(element) && !disabled) {
       const role = getElementRole(element);
       const label = getElementLabel(element, role);
       const formGroup = getFormGroup(element);
-      const visible = visibilityFor(element, options);
       const rect = rectFor(element, options);
-      const ownerDocument = element.ownerDocument;
-      const width = widthByDocument.get(ownerDocument) ?? viewportWidth(ownerDocument);
-      widthByDocument.set(ownerDocument, width);
 
       const target: Target = {
         id: createTargetId(role, label, formGroup, structuralPath, occurrences, ids),
         label,
         role,
         formGroup,
-        proximity: rect.top * width + rect.left,
-        hidden: !visible,
+        proximity:
+          (context.offset.top + rect.top) * width +
+          context.offset.left +
+          rect.left,
+        hidden,
         ...(isPrimaryAction(element) ? { primaryAction: true } : {}),
       };
 
@@ -262,19 +290,39 @@ export function scanDocument(
 
     const shadowRoot = getOpenShadowRoot(element);
     if (shadowRoot) {
-      walkRoot(shadowRoot, `${structuralPath}/shadow`);
+      walkRoot(shadowRoot, `${structuralPath}/shadow`, {
+        disabled: descendantDisabled,
+        hidden,
+        offset: context.offset,
+      });
     }
 
     const frameDocument = getFrameDocument(element);
     if (frameDocument) {
-      walkRoot(frameDocument, `${structuralPath}/frame`);
+      const frameRect = rectFor(element, options);
+      walkRoot(frameDocument, `${structuralPath}/frame`, {
+        disabled: descendantDisabled,
+        hidden,
+        offset: {
+          top: context.offset.top + frameRect.top,
+          left: context.offset.left + frameRect.left,
+        },
+      });
     }
 
     for (const [index, child] of Array.from(element.children).entries()) {
-      walkElement(child, `${structuralPath}/${index}`);
+      walkElement(child, `${structuralPath}/${index}`, {
+        disabled: descendantDisabled,
+        hidden,
+        offset: context.offset,
+      });
     }
   };
 
-  walkRoot(document, "");
+  walkRoot(document, "", {
+    disabled: false,
+    hidden: false,
+    offset: { top: 0, left: 0 },
+  });
   return scanned;
 }

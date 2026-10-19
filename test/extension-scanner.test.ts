@@ -13,7 +13,9 @@ function fixtureOptions() {
     getVisibility: (element: Element) =>
       !element.hasAttribute("hidden") &&
       element.getAttribute("aria-hidden") !== "true" &&
-      !/display\s*:\s*none/i.test(element.getAttribute("style") ?? ""),
+      !/(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0)/i.test(
+        element.getAttribute("style") ?? "",
+      ),
     getRect: (element: Element) => ({
       top: Number(element.getAttribute("data-top") ?? 0),
       left: Number(element.getAttribute("data-left") ?? 0),
@@ -191,4 +193,156 @@ test("does not put element references into core targets", () => {
   assert.equal(new Set(ids).size, ids.length);
   assert.ok(scanned.every(({ target }) => !Object.prototype.hasOwnProperty.call(target, "element")));
   assert.notEqual(ids[0], ids[1]);
+});
+
+test("converts nested iframe positions into top-page coordinates using top-level width", () => {
+  const document = parse(`
+    <main>
+      <iframe id="outer" data-top="20" data-left="30"></iframe>
+    </main>
+  `);
+  const outer = document.querySelector("#outer");
+  assert.ok(outer);
+  Object.defineProperty(document.defaultView, "innerWidth", {
+    configurable: true,
+    value: 100,
+  });
+
+  const outerDocument = parse(
+    `<iframe id="inner" data-top="5" data-left="6"></iframe>`,
+  );
+  const inner = outerDocument.querySelector("#inner");
+  assert.ok(inner);
+  const innerDocument = parse(
+    `<button data-top="7" data-left="8">Nested frame action</button>`,
+  );
+  Object.defineProperty(inner, "contentDocument", {
+    configurable: true,
+    value: innerDocument,
+  });
+  Object.defineProperty(outer, "contentDocument", {
+    configurable: true,
+    value: outerDocument,
+  });
+
+  const [target] = scanDocument(document, fixtureOptions());
+
+  assert.ok(target);
+  assert.equal(target.target.proximity, 32 * 100 + 44);
+});
+
+test("propagates hidden state through ancestors, shadow hosts, and iframe hosts", () => {
+  const document = parse(`
+    <main>
+      <div hidden><button id="hidden-parent">Parent hidden</button></div>
+      <div aria-hidden="true"><button id="aria-parent">ARIA parent hidden</button></div>
+      <div style="visibility:hidden"><button id="css-parent">CSS parent hidden</button></div>
+      <x-hidden id="shadow-host" hidden></x-hidden>
+      <iframe id="frame-host" aria-hidden="true"></iframe>
+    </main>
+  `);
+  const shadowHost = document.querySelector("#shadow-host");
+  const frameHost = document.querySelector("#frame-host");
+  assert.ok(shadowHost);
+  assert.ok(frameHost);
+
+  const shadowRoot = document.createDocumentFragment();
+  const shadowButton = document.createElement("button");
+  shadowButton.textContent = "Shadow hidden";
+  shadowRoot.append(shadowButton);
+  Object.defineProperty(shadowHost, "shadowRoot", {
+    configurable: true,
+    value: shadowRoot,
+  });
+
+  const frameDocument = parse(`<button id="frame-child">Frame hidden</button>`);
+  Object.defineProperty(frameHost, "contentDocument", {
+    configurable: true,
+    value: frameDocument,
+  });
+
+  const scanned = scanDocument(document, fixtureOptions());
+  const hiddenIds = new Set(
+    scanned
+      .filter(({ target }) => target.hidden)
+      .map(({ element }) => element.getAttribute("id")),
+  );
+
+  assert.ok(hiddenIds.has("hidden-parent"));
+  assert.ok(hiddenIds.has("aria-parent"));
+  assert.ok(hiddenIds.has("css-parent"));
+  assert.ok(scanned.some(({ target }) => target.label === "Shadow hidden" && target.hidden));
+  assert.ok(hiddenIds.has("frame-child"));
+});
+
+test("filters hidden label descendants and resolves labels inside open shadow roots", () => {
+  const document = parse(`
+    <main>
+      <button id="visible-label">
+        <span hidden>Hidden text</span>
+        <span aria-hidden="true">ARIA text</span>
+        <span style="display:none">CSS text</span>
+        Visible text
+      </button>
+      <x-form id="shadow-form"></x-form>
+    </main>
+  `);
+  const shadowHost = document.querySelector("#shadow-form");
+  assert.ok(shadowHost);
+  const shadowRoot = document.createDocumentFragment();
+  const label = document.createElement("label");
+  label.setAttribute("for", "shadow-input");
+  label.append("Shadow ");
+  const hiddenLabelText = document.createElement("span");
+  hiddenLabelText.setAttribute("aria-hidden", "true");
+  hiddenLabelText.textContent = "hidden";
+  label.append(hiddenLabelText, "label");
+  const input = document.createElement("input");
+  input.id = "shadow-input";
+  shadowRoot.append(label, input);
+  Object.defineProperty(shadowHost, "shadowRoot", {
+    configurable: true,
+    value: shadowRoot,
+  });
+
+  const scanned = scanDocument(document, fixtureOptions());
+
+  assert.equal(
+    scanned.find(({ element }) => element.getAttribute("id") === "visible-label")?.target.label,
+    "Visible text",
+  );
+  assert.equal(
+    scanned.find(({ element }) => element.getAttribute("id") === "shadow-input")?.target.label,
+    "Shadow label",
+  );
+});
+
+test("excludes aria-disabled descendants and preserves the first legend exception", () => {
+  const document = parse(`
+    <main>
+      <div aria-disabled="true">
+        <button id="aria-child">ARIA disabled child</button>
+        <div><input id="aria-grandchild" aria-label="ARIA disabled grandchild"></div>
+      </div>
+      <fieldset disabled>
+        <legend>First legend <button id="legend-child">Legend action</button></legend>
+        <button id="fieldset-child">Fieldset action</button>
+      </fieldset>
+    </main>
+  `);
+
+  const scanned = scanDocument(document, fixtureOptions());
+  const ids = new Set(scanned.map(({ element }) => element.getAttribute("id")));
+
+  assert.ok(!ids.has("aria-child"));
+  assert.ok(!ids.has("aria-grandchild"));
+  assert.ok(ids.has("legend-child"));
+  assert.ok(!ids.has("fieldset-child"));
+});
+
+test("marks a default button as a primary action outside a form", () => {
+  const document = parse(`<button id="default-button">Default action</button>`);
+  const scanned = scanDocument(document, fixtureOptions());
+
+  assert.equal(scanned[0]?.target.primaryAction, true);
 });
