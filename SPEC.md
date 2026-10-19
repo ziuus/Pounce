@@ -7,9 +7,9 @@ DOM or browser APIs.
 ## Target data
 
 Each target has a stable `id`, a display `label`, and ranking metadata:
-`primaryAction`, `usageCount`, `proximity`, `hidden`, and its original input
-order. Labels and queries are trimmed, whitespace-collapsed, and matched
-case-insensitively.
+`primaryAction`, `proximity`, `hidden`, and its original input order. Usage
+history is supplied separately as a map from target id to pick count. Labels
+and queries are trimmed, whitespace-collapsed, and matched case-insensitively.
 
 ## Ranking
 

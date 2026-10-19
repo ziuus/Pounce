@@ -22,6 +22,19 @@ Build the library into `dist/`:
 npm run build
 ```
 
+Use the pure core API with plain target data:
+
+```ts
+import { searchTargets } from "pounce-core";
+
+const results = searchTargets(
+  [{ id: "settings", label: "Settings", primaryAction: true }],
+  "set",
+  { usageHistory: new Map([["settings", 3]]) },
+);
+// results[0].hint === "1"
+```
+
 ## Test
 
 ```sh
