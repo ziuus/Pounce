@@ -4,16 +4,16 @@
 
 **Goal:** Add a Chrome/Firefox Manifest V3 extension that scans live pages, ranks interactive targets with Pounce core, and activates them from a keyboard overlay.
 
-**Architecture:** The extension is a separate `extension/` package inside this repository. A content script owns scanning, overlay rendering, keyboard interaction, and activation; a background service worker owns commands and storage access. The core library remains browser-independent, with only optional target metadata fields added for extension display and grouping.
+**Architecture:** The extension is a separate `extension/` package inside this repository. A content script owns scanning, overlay rendering, keyboard interaction, and activation; a background context owns commands and storage access. The build emits separate Chrome and Firefox manifests because Chrome uses an MV3 service worker while Firefox uses a classic background script. The core library remains browser-independent, with only optional target metadata fields added for extension display and grouping.
 
-**Tech Stack:** TypeScript, Manifest V3, native WebExtension APIs, Node’s built-in test runner, and `linkedom` for static HTML fixture tests.
+**Tech Stack:** TypeScript, Manifest V3, native WebExtension APIs, esbuild for self-contained classic extension bundles, Node’s built-in test runner, and `linkedom` for static HTML fixture tests.
 
 ---
 
 ## Files and responsibilities
 
 - Modify `src/index.ts`: add optional `role` and `formGroup` target metadata without importing browser APIs.
-- Create `extension/manifest.json`: shared Chrome/Firefox MV3 manifest with two commands and content-script permissions.
+- Create `extension/manifest.chrome.json` and `extension/manifest.firefox.json`: browser-specific MV3 manifests with two commands and content-script permissions.
 - Create `extension/src/browser.ts`: narrow Chrome/Firefox API adapter using `globalThis.browser ?? globalThis.chrome`.
 - Create `extension/src/types.ts`: scanner, overlay, and message types.
 - Create `extension/src/labels.ts`: deterministic accessible-label and form-group extraction.
@@ -22,7 +22,7 @@
 - Create `extension/src/overlay.ts`: fixed overlay UI, live ranking, hint rendering, keyboard handling, activation, and input-first mode.
 - Create `extension/src/content.ts`: content-script bootstrap and mutation-observer rescan wiring.
 - Create `extension/src/background.ts`: command registration and message delivery to the active tab.
-- Create `scripts/copy-extension.mjs`: copy the manifest and static HTML fixtures into `dist/` after TypeScript compilation.
+- Create `scripts/copy-extension.mjs`: bundle classic content/background scripts with esbuild, copy browser-specific manifests and static HTML fixtures into `dist/` after TypeScript compilation.
 - Create `test/fixtures/basic.html` and `test/fixtures/frame.html`: deterministic static page fixtures.
 - Create `test/extension-scanner.test.ts`: scanner and conversion tests using `linkedom`.
 - Modify `package.json`, `package-lock.json`, `tsconfig.json`, `README.md`, and `Dockerfile`: build, test, package, Docker, and load instructions.
@@ -38,15 +38,15 @@
 
 ### Task 2: Add extension build and fixture test infrastructure
 
-**Files:** `extension/manifest.json`, `scripts/copy-extension.mjs`, `test/fixtures/*.html`, `package.json`, `package-lock.json`, `tsconfig.json`, `Dockerfile`
+**Files:** `extension/manifest.chrome.json`, `extension/manifest.firefox.json`, `scripts/copy-extension.mjs`, `test/fixtures/*.html`, `package.json`, `package-lock.json`, `tsconfig.json`, `Dockerfile`
 
-- [ ] Add `linkedom` as an exact dev dependency with `npm install --save-dev --save-exact linkedom`.
+- [ ] Add `linkedom` and `esbuild` as exact dev dependencies with `npm install --save-dev --save-exact linkedom esbuild`.
 - [ ] Extend the TypeScript include list to compile `extension/**/*.ts` and keep output under `dist/extension`.
-- [ ] Add `scripts/copy-extension.mjs` that creates `dist/extension`, copies `extension/manifest.json` to `dist/extension/manifest.json`, and copies `test/fixtures` to `dist/fixtures`.
+- [ ] Add `scripts/copy-extension.mjs` that creates `dist/extension/chrome` and `dist/extension/firefox`, bundles `content.ts` and `background.ts` as self-contained classic scripts, copies the matching manifest into each directory, and copies `test/fixtures` to `dist/fixtures`.
 - [ ] Change `build` to run TypeScript followed by the copy script, and keep `test` as one command that runs all `dist/test/*.test.js` files.
-- [ ] Add a Manifest V3 file with `storage`, `<all_urls>`, two commands (`Alt+Shift+P` open and `Alt+Shift+I` input-first), a background service worker, and a top-document content script.
+- [ ] Add browser-specific MV3 manifests with `storage` in `permissions`, `<all_urls>` in `host_permissions`, `matches: ["<all_urls>"]`, `all_frames: false`, and two commands. Use `Alt+Shift+P` for open; leave input-first unassigned by default because `Alt+Shift+I` conflicts with Chrome.
 - [ ] Add static HTML fixtures containing buttons, links, inputs, selects, textareas, checkboxes, ARIA roles, a hidden element, a disabled element, and a same-origin iframe placeholder.
-- [ ] Run `npm test` and verify the build emits `dist/extension/manifest.json` before committing `chore: add extension build infrastructure`.
+- [ ] Run `npm test` and verify each emitted directory contains a manifest, `content.js`, and `background.js` before committing `chore: add extension build infrastructure`.
 
 ### Task 3: Implement scanner and conversion test-first
 
@@ -85,10 +85,10 @@ export function scanDocument(
 
 **Files:** `extension/src/browser.ts`, `extension/src/storage.ts`, `extension/src/background.ts`, `extension/src/types.ts`, `test/extension-scanner.test.ts` if shared types need coverage
 
-- [ ] Add a typed API adapter that supports `commands`, `runtime`, `tabs`, and `storage.local` on both Chrome and Firefox without adding browser code to `src/`.
-- [ ] Store only `{ [targetId: string]: number }` under an origin-scoped key derived from `location.origin`.
+- [ ] Add a typed API adapter that supports `commands`, `runtime`, `tabs`, and `storage.local` on both Chrome and Firefox without adding browser code to `src/`; normalize Promise/callback differences in the adapter.
+- [ ] Store only `{ [targetId: string]: number }` under an origin-scoped key derived from the page origin sent by the content script; never derive it from the background context’s extension origin.
 - [ ] Implement `loadUsageHistory(origin)` and `recordPick(origin, targetId)` with missing/invalid storage treated as an empty map and counts clamped to non-negative finite integers.
-- [ ] Register the two manifest commands and send `{ type: "open", inputFirst: boolean }` to the active tab’s content script.
+- [ ] Register the two manifest commands and send `{ type: "open", inputFirst: boolean }` to the active tab’s content script; handle `{ type: "loadHistory", origin }` and `{ type: "recordPick", origin, targetId }` messages from content scripts.
 - [ ] Keep command delivery failure non-fatal for restricted pages where content scripts cannot run.
 - [ ] Run `npm test`; commit `feat: add extension commands and usage storage`.
 
@@ -110,9 +110,9 @@ export function scanDocument(
 
 **Files:** `README.md`, `Dockerfile`, `package.json`, `package-lock.json`
 
-- [ ] Document `npm ci`, `npm test`, `npm run build`, and the emitted extension directory `dist/extension`.
-- [ ] Add Chrome instructions: `chrome://extensions`, Developer mode, Load unpacked, choose `dist/extension`, and configure shortcuts if desired.
-- [ ] Add Firefox instructions: `about:debugging#/runtime/this-firefox`, Load Temporary Add-on, choose `dist/extension/manifest.json`.
+- [ ] Document `npm ci`, `npm test`, `npm run build`, and the emitted extension directories `dist/extension/chrome` and `dist/extension/firefox`.
+- [ ] Add Chrome instructions: `chrome://extensions`, Developer mode, Load unpacked, choose `dist/extension/chrome`, and configure input-first in the extension shortcuts page.
+- [ ] Add Firefox instructions: `about:debugging#/runtime/this-firefox`, Load Temporary Add-on, choose `dist/extension/firefox/manifest.json`.
 - [ ] Update Dockerfile to copy extension sources/fixtures and run the single `npm test` command.
 - [ ] Run `npm test`, `npm run typecheck`, `npm pack --dry-run`, and `git diff --check`.
 - [ ] If Docker is installed, run `docker build -t pounce . && docker run --rm pounce`; otherwise record Docker as unverified rather than claiming it passed.
