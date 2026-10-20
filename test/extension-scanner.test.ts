@@ -346,3 +346,166 @@ test("marks a default button as a primary action outside a form", () => {
 
   assert.equal(scanned[0]?.target.primaryAction, true);
 });
+
+test("parses inline opacity as a complete numeric value", () => {
+  const document = parse(`
+    <main>
+      <button id="semi-visible" style="opacity:0.5">Semi-visible</button>
+      <button id="transparent" style="opacity:0">Transparent</button>
+    </main>
+  `);
+
+  const view = document.defaultView;
+  assert.ok(view);
+  Object.defineProperty(view, "innerWidth", {
+    configurable: true,
+    value: 100,
+  });
+  for (const element of Array.from(document.querySelectorAll("*"))) {
+    Object.defineProperty(element, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 0, left: 0, width: 10, height: 10 }),
+    });
+  }
+
+  const scanned = scanDocument(document);
+  const targetById = new Map(
+    scanned.map(({ element, target }) => [element.getAttribute("id"), target]),
+  );
+
+  assert.equal(targetById.get("semi-visible")?.hidden, false);
+  assert.equal(targetById.get("transparent")?.hidden, true);
+});
+
+test("ignores associated labels hidden by themselves or their ancestors", () => {
+  const document = parse(`
+    <main>
+      <label for="hidden-label" hidden>Hidden label</label>
+      <input id="hidden-label">
+      <label for="aria-label" aria-hidden="true">ARIA hidden label</label>
+      <input id="aria-label">
+      <div style="display:none">
+        <label for="css-label">CSS hidden label</label>
+      </div>
+      <input id="css-label">
+    </main>
+  `);
+
+  const scanned = scanDocument(document, fixtureOptions());
+  const labelById = new Map(
+    scanned.map(({ element, target }) => [element.getAttribute("id"), target.label]),
+  );
+
+  assert.equal(labelById.get("hidden-label"), "textbox");
+  assert.equal(labelById.get("aria-label"), "textbox");
+  assert.equal(labelById.get("css-label"), "textbox");
+});
+
+test("propagates disabled state through same-origin iframe contexts", () => {
+  const document = parse(`
+    <main>
+      <iframe id="disabled-frame" disabled></iframe>
+      <iframe id="aria-disabled-frame" aria-disabled="true"></iframe>
+      <fieldset disabled>
+        <legend>Controls <iframe id="legend-frame"></iframe></legend>
+        <iframe id="fieldset-frame"></iframe>
+      </fieldset>
+    </main>
+  `);
+  const disabledFrame = document.querySelector("#disabled-frame");
+  const ariaDisabledFrame = document.querySelector("#aria-disabled-frame");
+  const legendFrame = document.querySelector("#legend-frame");
+  const fieldsetFrame = document.querySelector("#fieldset-frame");
+  assert.ok(disabledFrame);
+  assert.ok(ariaDisabledFrame);
+  assert.ok(legendFrame);
+  assert.ok(fieldsetFrame);
+
+  for (const [frame, label] of [
+    [disabledFrame, "Disabled frame child"],
+    [ariaDisabledFrame, "ARIA-disabled frame child"],
+    [legendFrame, "Legend frame child"],
+    [fieldsetFrame, "Fieldset frame child"],
+  ] as const) {
+    Object.defineProperty(frame, "contentDocument", {
+      configurable: true,
+      value: parse(`<button>${label}</button>`),
+    });
+  }
+
+  const scanned = scanDocument(document, fixtureOptions());
+  const labels = scanned.map(({ target }) => target.label);
+
+  assert.ok(!labels.includes("Disabled frame child"));
+  assert.ok(!labels.includes("ARIA-disabled frame child"));
+  assert.ok(labels.includes("Legend frame child"));
+  assert.ok(!labels.includes("Fieldset frame child"));
+});
+
+test("treats invalid button types as submit actions", () => {
+  const document = parse(`
+    <main>
+      <button id="invalid" type="launch">Invalid type</button>
+      <button id="button" type="button">Button type</button>
+      <button id="reset" type="reset">Reset type</button>
+      <button id="submit" type="submit">Submit type</button>
+    </main>
+  `);
+
+  const scanned = scanDocument(document, fixtureOptions());
+  const primaryById = new Map(
+    scanned.map(({ element, target }) => [element.getAttribute("id"), target.primaryAction]),
+  );
+
+  assert.equal(primaryById.get("invalid"), true);
+  assert.equal(primaryById.get("button"), undefined);
+  assert.equal(primaryById.get("reset"), undefined);
+  assert.equal(primaryById.get("submit"), true);
+});
+
+test("uses deterministic default visibility probes without browser layout", () => {
+  const document = parse(`
+    <main>
+      <button id="zero-rect" data-display="block" data-rect="zero">Zero rect</button>
+      <button id="display-none" data-display="none">Display none</button>
+      <button id="visibility-hidden" data-visibility="hidden">Visibility hidden</button>
+      <button id="opacity-zero" data-opacity="0">Opacity zero</button>
+      <button id="opacity-half" data-opacity="0.5">Opacity half</button>
+    </main>
+  `);
+  const view = document.defaultView;
+  assert.ok(view);
+  Object.defineProperty(view, "innerWidth", {
+    configurable: true,
+    value: 100,
+  });
+  view.getComputedStyle = (element: Element) => ({
+    display: element.getAttribute("data-display") ?? "block",
+    visibility: element.getAttribute("data-visibility") ?? "visible",
+    opacity: element.getAttribute("data-opacity") ?? "1",
+  }) as CSSStyleDeclaration;
+
+  for (const element of Array.from(document.querySelectorAll("*"))) {
+    const zeroRect = element.getAttribute("data-rect") === "zero";
+    Object.defineProperty(element, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        top: 0,
+        left: 0,
+        width: zeroRect ? 0 : 10,
+        height: zeroRect ? 0 : 10,
+      }),
+    });
+  }
+
+  const scanned = scanDocument(document);
+  const hiddenById = new Map(
+    scanned.map(({ element, target }) => [element.getAttribute("id"), target.hidden]),
+  );
+
+  assert.equal(hiddenById.get("zero-rect"), true);
+  assert.equal(hiddenById.get("display-none"), true);
+  assert.equal(hiddenById.get("visibility-hidden"), true);
+  assert.equal(hiddenById.get("opacity-zero"), true);
+  assert.equal(hiddenById.get("opacity-half"), false);
+});

@@ -182,7 +182,7 @@ function isPrimaryAction(element: Element): boolean {
     return type === "submit" || type === "image";
   }
   if (tagName === "button") {
-    return type === "submit" || type === "";
+    return type !== "button" && type !== "reset";
   }
   return false;
 }
@@ -301,7 +301,7 @@ export function scanDocument(
     if (frameDocument) {
       const frameRect = rectFor(element, options);
       walkRoot(frameDocument, `${structuralPath}/frame`, {
-        disabled: descendantDisabled,
+        disabled,
         hidden,
         offset: {
           top: context.offset.top + frameRect.top,

@@ -23,12 +23,32 @@ function parentOrShadowHost(element: Element): Element | null {
   }
 }
 
-function hiddenByInlineStyle(element: Element): boolean {
+function inlineStyleValue(element: Element, property: string): string {
   const style = element.getAttribute("style") ?? "";
+  const match = new RegExp(
+    `(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`,
+    "i",
+  ).exec(style);
+
+  return match?.[1]?.replace(/\s*!important\s*$/i, "").trim() ?? "";
+}
+
+function isZeroNumeric(value: string): boolean {
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value)) {
+    return false;
+  }
+
+  return Number(value) === 0;
+}
+
+function hiddenByInlineStyle(element: Element): boolean {
+  const opacity = inlineStyleValue(element, "opacity");
   return (
-    /(?:^|;)\s*display\s*:\s*none\b/i.test(style) ||
-    /(?:^|;)\s*visibility\s*:\s*(?:hidden|collapse)\b/i.test(style) ||
-    /(?:^|;)\s*opacity\s*:\s*0(?:\D|$)/i.test(style)
+    inlineStyleValue(element, "display").toLowerCase() === "none" ||
+    ["hidden", "collapse"].includes(
+      inlineStyleValue(element, "visibility").toLowerCase(),
+    ) ||
+    isZeroNumeric(opacity)
   );
 }
 
@@ -39,7 +59,7 @@ function hiddenByComputedStyle(element: Element): boolean {
       computedStyle?.display === "none" ||
       computedStyle?.visibility === "hidden" ||
       computedStyle?.visibility === "collapse" ||
-      computedStyle?.opacity === "0"
+      isZeroNumeric(computedStyle?.opacity ?? "")
     );
   } catch {
     return false;
@@ -54,6 +74,17 @@ export function isLocallyHidden(element: Element): boolean {
     hiddenByInlineStyle(element) ||
     hiddenByComputedStyle(element)
   );
+}
+
+function isHiddenThroughAncestors(element: Element): boolean {
+  let current: Element | null = element;
+  while (current) {
+    if (isLocallyHidden(current)) {
+      return true;
+    }
+    current = parentOrShadowHost(current);
+  }
+  return false;
 }
 
 function visibleText(element: Element): string {
@@ -129,7 +160,10 @@ function associatedLabelText(element: Element): string {
     try {
       const root = element.getRootNode() as Document | DocumentFragment;
       for (const label of Array.from(root.querySelectorAll("label"))) {
-        if (label.getAttribute("for") === elementId) {
+        if (
+          label.getAttribute("for") === elementId &&
+          !isHiddenThroughAncestors(label)
+        ) {
           const text = visibleText(label);
           if (text) {
             return text;
