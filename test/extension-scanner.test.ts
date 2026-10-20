@@ -509,3 +509,85 @@ test("uses deterministic default visibility probes without browser layout", () =
   assert.equal(hiddenById.get("opacity-zero"), true);
   assert.equal(hiddenById.get("opacity-half"), false);
 });
+
+test("excludes shadow descendants of disabled and aria-disabled hosts", () => {
+  const document = parse(`
+    <main>
+      <x-disabled id="disabled-host" disabled></x-disabled>
+      <x-disabled id="aria-disabled-host" aria-disabled="true"></x-disabled>
+      <x-enabled id="enabled-host"></x-enabled>
+    </main>
+  `);
+  const disabledHost = document.querySelector("#disabled-host");
+  const ariaDisabledHost = document.querySelector("#aria-disabled-host");
+  const enabledHost = document.querySelector("#enabled-host");
+  assert.ok(disabledHost);
+  assert.ok(ariaDisabledHost);
+  assert.ok(enabledHost);
+
+  for (const [host, label] of [
+    [disabledHost, "Disabled shadow action"],
+    [ariaDisabledHost, "ARIA-disabled shadow action"],
+    [enabledHost, "Enabled shadow action"],
+  ] as const) {
+    const shadowRoot = document.createDocumentFragment();
+    const button = document.createElement("button");
+    button.textContent = label;
+    shadowRoot.append(button);
+    Object.defineProperty(host, "shadowRoot", {
+      configurable: true,
+      value: shadowRoot,
+    });
+  }
+
+  const labels = scanDocument(document, fixtureOptions()).map(({ target }) => target.label);
+
+  assert.ok(!labels.includes("Disabled shadow action"));
+  assert.ok(!labels.includes("ARIA-disabled shadow action"));
+  assert.ok(labels.includes("Enabled shadow action"));
+});
+
+test("keeps an existing element ID stable when an unrelated sibling is inserted", () => {
+  const document = parse(`
+    <main>
+      <button id="existing">Existing target</button>
+    </main>
+  `);
+  const main = document.querySelector("main");
+  const existing = document.querySelector("#existing");
+  assert.ok(main);
+  assert.ok(existing);
+
+  const firstScan = scanDocument(document, fixtureOptions());
+  const firstId = firstScan.find(({ element }) => element === existing)?.target.id;
+  assert.ok(firstId);
+
+  const unrelated = document.createElement("div");
+  unrelated.textContent = "Unrelated content";
+  main.insertBefore(unrelated, existing);
+
+  const secondScan = scanDocument(document, fixtureOptions());
+  const secondId = secondScan.find(({ element }) => element === existing)?.target.id;
+
+  assert.equal(secondId, firstId);
+});
+
+test("requires complete non-negative integer tabindex tokens for custom targets", () => {
+  const document = parse(`
+    <main>
+      <div id="valid" tabindex="0">Valid</div>
+      <div id="decimal" tabindex="1.5">Decimal</div>
+      <div id="junk" tabindex="0junk">Junk</div>
+      <div id="negative" tabindex="-1">Negative</div>
+    </main>
+  `);
+
+  const ids = new Set(
+    scanDocument(document, fixtureOptions()).map(({ element }) => element.getAttribute("id")),
+  );
+
+  assert.ok(ids.has("valid"));
+  assert.ok(!ids.has("decimal"));
+  assert.ok(!ids.has("junk"));
+  assert.ok(!ids.has("negative"));
+});

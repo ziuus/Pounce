@@ -15,6 +15,9 @@ export type { ScanOptions, ScannedTarget } from "./types.js";
 
 type TraversalRoot = Document | DocumentFragment;
 
+const documentIdRegistries = new WeakMap<Document, WeakMap<Element, string>>();
+const registryCounters = new WeakMap<WeakMap<Element, string>, number>();
+
 interface TraversalContext {
   disabled: boolean;
   hidden: boolean;
@@ -60,8 +63,13 @@ function hasNonNegativeTabIndex(element: Element): boolean {
     return false;
   }
 
-  const parsed = Number.parseInt(tabIndex, 10);
-  return Number.isInteger(parsed) && parsed >= 0;
+  const token = tabIndex.trim();
+  if (!/^\+?\d+$/.test(token)) {
+    return false;
+  }
+
+  const parsed = Number(token);
+  return Number.isSafeInteger(parsed) && parsed >= 0;
 }
 
 function isInteractive(element: Element): boolean {
@@ -197,29 +205,52 @@ function hash(value: string): string {
 }
 
 function createTargetId(
+  element: Element,
   role: string,
   label: string,
   formGroup: string,
   structuralPath: string,
-  occurrences: Map<string, number>,
+  registry: WeakMap<Element, string>,
   ids: Set<string>,
 ): string {
   const identity = [role, label, formGroup]
     .map((value) => normalizeWhitespace(value).toLowerCase())
     .join("|");
-  const occurrence = (occurrences.get(identity) ?? 0) + 1;
-  occurrences.set(identity, occurrence);
-
-  const seed = `${identity}|${structuralPath}|${occurrence}`;
-  const prefix = `pounce-${hash(seed)}`;
-  let id = prefix;
-  let collision = 1;
-  while (ids.has(id)) {
-    collision += 1;
-    id = `${prefix}-${collision}`;
+  const registeredId = registry.get(element);
+  if (registeredId && !ids.has(registeredId)) {
+    ids.add(registeredId);
+    return registeredId;
   }
+
+  let counter = registryCounters.get(registry) ?? 0;
+  let id = "";
+  do {
+    counter += 1;
+    id = `pounce-${hash(`${identity}|${structuralPath}|${counter}`)}`;
+  } while (ids.has(id));
+
+  registryCounters.set(registry, counter);
+  registry.set(element, id);
   ids.add(id);
   return id;
+}
+
+function getIdRegistry(
+  document: Document,
+  options: ScanOptions,
+): WeakMap<Element, string> {
+  if (options.idRegistry) {
+    return options.idRegistry;
+  }
+
+  const existingRegistry = documentIdRegistries.get(document);
+  if (existingRegistry) {
+    return existingRegistry;
+  }
+
+  const registry = new WeakMap<Element, string>();
+  documentIdRegistries.set(document, registry);
+  return registry;
 }
 
 export function scanDocument(
@@ -228,9 +259,9 @@ export function scanDocument(
 ): ScannedTarget[] {
   const scanned: ScannedTarget[] = [];
   const visitedRoots = new WeakSet<object>();
-  const occurrences = new Map<string, number>();
   const ids = new Set<string>();
   const width = viewportWidth(document);
+  const idRegistry = getIdRegistry(document, options);
 
   const walkRoot = (
     root: TraversalRoot,
@@ -273,7 +304,15 @@ export function scanDocument(
       const rect = rectFor(element, options);
 
       const target: Target = {
-        id: createTargetId(role, label, formGroup, structuralPath, occurrences, ids),
+        id: createTargetId(
+          element,
+          role,
+          label,
+          formGroup,
+          structuralPath,
+          idRegistry,
+          ids,
+        ),
         label,
         role,
         formGroup,
@@ -291,7 +330,7 @@ export function scanDocument(
     const shadowRoot = getOpenShadowRoot(element);
     if (shadowRoot) {
       walkRoot(shadowRoot, `${structuralPath}/shadow`, {
-        disabled: descendantDisabled,
+        disabled,
         hidden,
         offset: context.offset,
       });
