@@ -3,6 +3,10 @@
 Core TypeScript library for deterministic keyboard-first target ranking and
 numeric hints. The current scope is browser-independent plain data.
 
+> Building this in the open — if it saves you time, a star helps others find it.
+> Found a bug, or have an idea? [Open an issue](https://github.com/ziuus/Pounce/issues).
+> New ranking heuristics and target-format ideas welcome.
+
 ## Requirements
 
 - Node.js `22.23.3` (see `.nvmrc`)
